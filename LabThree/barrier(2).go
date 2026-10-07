@@ -26,17 +26,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 var j = 0
 
-//var ctx = context.Background() //moved to save passing pointers
-//var sem = semaphore.NewWeighted(0)
+var ctx = context.Background() //moved to save passing pointers
+var sem = semaphore.NewWeighted(1)
 
-var barrier = make(chan struct{}, 1)
+//var barrier = make(chan struct{}, 1)
 
 // Place a barrier in this function --use Mutex's and Semaphores
 func doStuff(goNum int, wg *sync.WaitGroup, theLock *sync.Mutex, tot int) bool {
@@ -48,22 +51,22 @@ func doStuff(goNum int, wg *sync.WaitGroup, theLock *sync.Mutex, tot int) bool {
 	if j == tot {
 		//fmt.Println(goNum, "last through", j) //troubleshooting
 		theLock.Unlock()
-		//sem.Release(1) //for some reason this is crashing it as soon as called, might have misunderstood syntax
-		barrier <- struct{}{} // using this as release as GO was being awkward about it
+		sem.Release(1) //for some reason this was crashing it as soon as called, when sem inititalised to 0, working now though
+		//barrier <- struct{}{} // using this as release when GO was being awkward about it
 	} else {
 		//fmt.Println(goNum, "going to wait", j)
 		theLock.Unlock()
 	}
-	//sem.Acquire(ctx, 1)
-	<-barrier // using this as acquire
+	sem.Acquire(ctx, 1)
+	//<-barrier // using this as acquire
 	//fmt.Println(goNum, "through barrier")
 	theLock.Lock()
 	j--
 	if j != 0 {
 		//fmt.Println(goNum, "releasing next", j)
 		theLock.Unlock()
-		//sem.Release(1)
-		barrier <- struct{}{}
+		sem.Release(1)
+		//barrier <- struct{}{}
 	} else {
 		theLock.Unlock()
 		//fmt.Println(goNum, "last through")
@@ -75,7 +78,8 @@ func doStuff(goNum int, wg *sync.WaitGroup, theLock *sync.Mutex, tot int) bool {
 }
 
 func main() {
-	totalRoutines := 10
+	sem.Acquire(ctx, 1) // needed because sem.newWeighted(0) would make the first release call throw panic
+	totalRoutines := 100
 	var wg sync.WaitGroup
 	wg.Add(totalRoutines)
 	//we will need some of these
