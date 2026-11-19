@@ -34,7 +34,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-var j = 0
+var j int
 
 var ctx = context.Background() //moved to save passing pointers
 var sem = semaphore.NewWeighted(1)
@@ -51,7 +51,9 @@ func doStuff(goNum int, wg *sync.WaitGroup, theLock *sync.Mutex, tot int) bool {
 	if j == tot {
 		//fmt.Println(goNum, "last through", j) //troubleshooting
 		theLock.Unlock()
-		sem.Release(1) //for some reason this was crashing it as soon as called, when sem inititalised to 0, working now though
+		sem.Release(1)
+		//for some reason this was crashing it as soon as called when sem inititalised to 0, working now though
+		// ^^^ was because semaphores don't work like channels, can't have 0 size
 		//barrier <- struct{}{} // using this as release when GO was being awkward about it
 	} else {
 		//fmt.Println(goNum, "going to wait", j)
@@ -92,5 +94,5 @@ func main() {
 	}
 	//theLock.Unlock()
 
-	wg.Wait() //wait for everyone to finish before exiting
+	wg.Wait() //wait for all to finish before exiting
 }
