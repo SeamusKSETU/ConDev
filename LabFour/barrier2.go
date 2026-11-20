@@ -35,26 +35,25 @@ import (
 )
 
 // Place a barrier in this function --use Mutex's and Semaphores
-func doStuff(goNum int, max *atomic.Int64, wg *sync.WaitGroup, theChan chan bool, atomvar *atomic.Int64,
+func doStuff(goNum int, max int64, wg *sync.WaitGroup, theChan chan bool, atomvar *atomic.Int64,
 	aChan chan bool) bool {
 	//time.Sleep(time.Millisecond)
 	fmt.Println("Part A", goNum)
 	//we wait here until everyone has completed part A
-	atomvar.Add(1)
 	//fmt.Println(*atomvar, " - ", *max) //troubleshooting
-	if atomvar.Load() == max.Load() { //last to arrive -signal others to go
+	if atomvar.Add(1) == max { //last to arrive -signal others to go
 		fmt.Println("release 1")
-		for range max.Load() - 1 {
+		for range max - 1 {
 			theChan <- true
 		}
 	} else { //not all here yet we wait until signal
 		<-theChan //n-1 wait here
 	}
 	fmt.Println("PartB", goNum)
-	atomvar.Add(-1)
-	if atomvar.Load() == 0 {
+
+	if atomvar.Add(-1) == 0 {
 		fmt.Println("release 2")
-		for range max.Load() - 1 {
+		for range max - 1 {
 			aChan <- true //last one through signals continue
 		}
 	} else { //n-1 wait to continue
@@ -65,7 +64,7 @@ func doStuff(goNum int, max *atomic.Int64, wg *sync.WaitGroup, theChan chan bool
 	return true
 } //end-doStuff
 
-func doStuffs(loops int, goNum int, max *atomic.Int64, wg *sync.WaitGroup, theChan chan bool, atomvar *atomic.Int64,
+func doStuffs(loops int, goNum int, max int64, wg *sync.WaitGroup, theChan chan bool, atomvar *atomic.Int64,
 	aChan chan bool) bool {
 	//testing barrier reusability by calling the functions multiple times
 	for range loops {
@@ -75,22 +74,20 @@ func doStuffs(loops int, goNum int, max *atomic.Int64, wg *sync.WaitGroup, theCh
 }
 
 func main() {
-	totalRoutines := 50
+	totalRoutines := 5
 	//arrived := 0
 	var wg sync.WaitGroup
-	loops := 20
+	loops := 200
 	wg.Add(totalRoutines * loops)
 	//we will need some of these
 	//var theLock sync.Mutex
 	var atomvar atomic.Int64 // atomic variable to use instead of mutex
-	var atomtot atomic.Int64
-	atomtot.Add(int64(totalRoutines)) //need to pass in the totalroutines as atomic for comparison
 
 	theChan := make(chan bool) //use unbuffered channel in place of semaphore
 	aChan := make(chan bool)   //would be much easier with a buffer of 1
 
 	for i := range totalRoutines { //create multiple go Routines here to test reusability
-		go doStuffs(loops, i, &atomtot, &wg, theChan, &atomvar, aChan)
+		go doStuffs(loops, i, int64(totalRoutines), &wg, theChan, &atomvar, aChan)
 	}
 
 	wg.Wait()
