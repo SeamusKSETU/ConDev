@@ -2,4 +2,4 @@ module LabSix
 
 go 1.27
 
-require golang.org/x/sync v0.23.0 // indirect
+require golang.org/x/sync v0.25.0

@@ -18,18 +18,19 @@
 // Author: Seamus Kennedy
 // Created on 02/11/2026
 // Description:
-// A simple Reader-Writer implemented
+// A simple Producer-Consumer implemented
 // Issues:
 // None I hope
 package main
 
 import (
 	"fmt"
-	"math/rand/v2"
+	"math/rand"
 	"sync"
-	"time"
 )
 
+// A simple Reader-Writer implemented, thought this was what the lab was on, whoops, commented out
+/*
 // variable for tracking how many readers currently accessing the data
 var readingCount int
 
@@ -122,3 +123,196 @@ func main() {
 	}
 	wg.Wait() //wait here until everyone is done
 } //main
+*/
+
+type Buffer struct {
+	data                []int
+	producercount, size int
+	consumerexit        bool
+	accesslock          chan struct{}
+	readlock            chan struct{}
+	writelock           chan struct{}
+	writecount          chan struct{}
+	readcount           chan struct{}
+}
+
+func createBuffer(size int) Buffer {
+	//empty readlock semaphore on creation
+	theBuffer := Buffer{
+		writecount:    make(chan struct{}, size),
+		readcount:     make(chan struct{}, size),
+		data:          make([]int, 0, size),
+		accesslock:    make(chan struct{}, 1),
+		readlock:      make(chan struct{}, 1),
+		writelock:     make(chan struct{}, 1),
+		producercount: 0,
+		consumerexit:  false,
+		size:          size,
+	}
+	return theBuffer
+}
+
+func (b *Buffer) Add(add []int, id int) {
+	fmt.Println("Producer", id, "going to add", add)
+	b.writelock <- struct{}{}
+	for range add {
+		b.writecount <- struct{}{}
+	}
+	b.accesslock <- struct{}{}
+	fmt.Println("Producer", id, "adding", add)
+	b.data = append(b.data, add...)
+	fmt.Println("Producer", id, "done adding, current data:", b.data)
+	<-b.accesslock
+	for range add {
+		b.readcount <- struct{}{}
+	}
+	<-b.writelock
+}
+
+func (b *Buffer) registerProducer() {
+	b.accesslock <- struct{}{}
+	b.producercount++
+	<-b.accesslock
+}
+
+func (b *Buffer) finishProducer() {
+	b.accesslock <- struct{}{}
+	b.producercount--
+	if b.producercount == 0 {
+		fmt.Println("Last Producer done. Current data:", b.data)
+		<-b.accesslock
+		//filling readcount to make sure consumers don't get stuck in the check below
+		for range b.size {
+			b.readcount <- struct{}{}
+		}
+	} else {
+		<-b.accesslock
+	}
+}
+
+func (b *Buffer) Get(size, id int) []int {
+	fmt.Println("Consumer", id, "getting", size, "data")
+	out := make([]int, 0)
+	b.readlock <- struct{}{}
+	fmt.Println("Consumer", id, "checking enough data available")
+	if b.consumerexit {
+		fmt.Println("Consumer", id, "exiting")
+		<-b.readlock
+		//returning a slice of -1 indicates consuming finished
+		return []int{-1}
+	}
+	//checking enough data produced for consume request before continuing
+	for range size {
+		<-b.readcount
+	}
+	b.accesslock <- struct{}{}
+	fmt.Println("Consumer", id, "accessing data")
+	//case for last consumer through
+	if b.producercount == 0 && size >= len(b.data) {
+		fmt.Println("Final data retrieved:", b.data)
+		out = b.data
+		b.consumerexit = true
+		<-b.accesslock
+		<-b.readlock
+	} else {
+		//normal consumer functioning
+		out = b.data[0:size]
+		b.data = b.data[size:]
+
+		fmt.Println("Consumer", id, "done getting", size, "data:", out)
+		<-b.accesslock
+		//letting writers know more space available
+		for range size {
+			<-b.writecount
+		}
+		<-b.readlock
+	}
+	return out
+}
+
+func Producer(buffer *Buffer, wg *sync.WaitGroup, loops, max, id int) {
+	defer wg.Done()
+	buffer.registerProducer()
+	defer buffer.finishProducer()
+	data := make([]int, 0)
+	var random int
+	for range loops {
+		random = 1 + rand.Intn(max-1)
+		for range random {
+			data = append(data, rand.Intn(100))
+		}
+		buffer.Add(data, id)
+		data = data[:0]
+	}
+	fmt.Println("Producer", id, "finished")
+}
+
+func Consumer(buffer *Buffer, wg *sync.WaitGroup, id, max int) {
+	defer wg.Done()
+	data := make([]int, 0)
+	size := 0
+	for {
+		size = 1 + rand.Intn(max-1)
+		data = buffer.Get(size, id)
+		if len(data) == 1 && data[0] == -1 {
+			break
+		}
+		if len(data) < size {
+			break
+		}
+		fmt.Println("Consumer", id, "consumed data:", data)
+	}
+	fmt.Println("Consumer", id, "finished")
+}
+
+func mainTakingArgumentsToTest(runNumber, maxsizeproduced, maxsizeconsumed, producerCount, consumerCount, producerloops int) {
+	//maxsizeproduced := 10
+	//maxsizeconsumed := 5
+	buffersize := maxsizeproduced + maxsizeconsumed
+	b := createBuffer(buffersize)
+	var wg sync.WaitGroup
+
+	//count of producer threads
+	//producerCount := 5
+	//producerloops := 100
+
+	//count of consumer threads
+	//consumerCount := 5
+	wg.Add(producerCount + consumerCount)
+	//locks for controlling flow
+	//start producers
+	for N := range producerCount {
+		go Producer(&b, &wg, producerloops, maxsizeproduced, runNumber*1000+N)
+		fmt.Println("start producer:", runNumber*1000+N)
+	}
+	//start consumers
+	for N := range consumerCount {
+		go Consumer(&b, &wg, runNumber*1000+N, maxsizeconsumed)
+		fmt.Println("start consumer:", runNumber*1000+N)
+	}
+	wg.Wait()
+}
+
+func main() {
+	runs := 1000
+	randomvalues := make([]int, 5)
+	runinfo := make([][]int, runs)
+	for i := range runs {
+		runinfo[i] = make([]int, 0)
+	}
+	for i := range runs {
+		//maxsizes can't be allowed to be 1 since they get passed into randIntn minus 1 above, 0 argument is invalid
+		randomvalues[0] = 2 + rand.Intn(98)
+		randomvalues[1] = 2 + rand.Intn(98)
+		//all other values have a lower limit of 1
+		randomvalues[2] = 1 + rand.Intn(99)
+		randomvalues[3] = 1 + rand.Intn(99)
+		randomvalues[4] = 1 + rand.Intn(999)
+		fmt.Println("run number:", i, "random values:", randomvalues)
+		mainTakingArgumentsToTest(i, randomvalues[0], randomvalues[1], randomvalues[2], randomvalues[3], randomvalues[4])
+		runinfo[i] = append(runinfo[i], randomvalues...)
+	}
+	for i := range runs {
+		fmt.Println("Run", i, "runinfo:", runinfo[i])
+	}
+}
